@@ -50,8 +50,13 @@ object WeatherApi {
                 "daily",
                 "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
             )
+            .addQueryParameter("minutely_15", "precipitation")
             .addQueryParameter("timezone", "auto")
-            .addQueryParameter("forecast_days", "7")
+            // 16 days is the longest forecast Open-Meteo offers. Hourly and 15-minute data
+            // are capped (starting from the current step) so the cached response stays small.
+            .addQueryParameter("forecast_days", "16")
+            .addQueryParameter("forecast_hours", "48")
+            .addQueryParameter("forecast_minutely_15", "12")
             .addQueryParameter(
                 "temperature_unit",
                 if (unit == TempUnit.FAHRENHEIT) "fahrenheit" else "celsius"

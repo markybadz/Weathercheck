@@ -1,6 +1,6 @@
 # Simple Weather (Android, Kotlin + Jetpack Compose)
 
-Current weather, a 24-hour forecast and a 7-day forecast for your location or any city you search for, plus optional daily and severe-weather notifications.
+Current weather that refreshes itself while the app is open, a rain outlook for the next 2 hours, a 24-hour forecast and a 16-day forecast for your location or any city you search for, plus optional daily and severe-weather notifications.
 
 ---
 
@@ -96,7 +96,8 @@ Requires Android 8.0 (API 26) or newer.
 * Toolchain: Android Gradle Plugin 8.9.1, Kotlin 2.1.20, Gradle wrapper 8.14.3, Compose BOM 2024.12.01, JDK 17 bytecode.
 * Approximate (coarse) location only, which is enough for weather and more private.
 * °C uses km/h for wind; °F uses mph.
-* Hourly view = the next 24 hours; daily view = 7 days, both in the location's own time zone.
+* Hourly view = the next 24 hours; daily view = 16 days (the longest Open-Meteo offers), both in the location's own time zone.
+* Real-time updates: while the app is on screen it refreshes every 15 minutes, which is how often Open-Meteo updates current conditions, and right away when you come back to it after 15 minutes or more. Pull down to refresh at any time. Nothing runs in the background except the notifications you turn on. The rain outlook uses Open-Meteo's 15-minute data; outside Europe and North America it is interpolated from hourly models, so treat it as a guide.
 * A debug APK is signed with Android's automatic debug key. To publish on the Play Store, you would create a release signing key (Build → Generate Signed App Bundle/APK).
 
 ## 7. Things you must do locally

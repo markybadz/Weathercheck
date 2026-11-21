@@ -2,6 +2,7 @@ package com.ana.simpleweather.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -21,6 +22,7 @@ data class ForecastResponse(
     val current: CurrentDto? = null,
     val hourly: HourlyDto? = null,
     val daily: DailyDto? = null,
+    @SerialName("minutely_15") val minutely15: MinutelyDto? = null,
 )
 
 @Serializable
@@ -50,6 +52,13 @@ data class DailyDto(
     @SerialName("temperature_2m_max") val tempMax: List<Double?> = emptyList(),
     @SerialName("temperature_2m_min") val tempMin: List<Double?> = emptyList(),
     @SerialName("precipitation_probability_max") val precipitationProbabilityMax: List<Double?> = emptyList(),
+)
+
+/** 15-minute steps, used for the "rain in the next 2 hours" line. */
+@Serializable
+data class MinutelyDto(
+    val time: List<String> = emptyList(),
+    val precipitation: List<Double?> = emptyList(),
 )
 
 @Serializable
@@ -87,6 +96,8 @@ data class WeatherData(
     val windUnit: String,
     val hourly: List<HourForecast>,
     val daily: List<DayForecast>,
+    /** Short-term rain outlook, e.g. "Rain likely in about 30 min". Null if the data is missing. */
+    val nowcast: String? = null,
 )
 
 data class HourForecast(
@@ -161,5 +172,39 @@ fun ForecastResponse.toWeatherData(): WeatherData {
         windUnit = currentUnits["wind_speed_10m"] ?: "",
         hourly = hours,
         daily = days,
+        nowcast = rainNowcast(),
     )
+}
+
+/** Precipitation per 15 minutes (mm) that counts as "raining". */
+private const val RAIN_MM_PER_15_MIN = 0.1
+
+/**
+ * Looks at the 15-minute precipitation for the next 2 hours and describes when
+ * rain starts or stops. Times are in the location's time zone, like [CurrentDto.time].
+ */
+internal fun ForecastResponse.rainNowcast(steps: Int = 8): String? {
+    val m = minutely15 ?: return null
+    val now = current?.time?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() } ?: return null
+    val start = m.time.indexOfLast { t ->
+        runCatching { !LocalDateTime.parse(t).isAfter(now) }.getOrDefault(false)
+    }
+    if (start < 0) return null
+    val end = minOf(start + steps, m.time.size)
+    if (end - start < 2) return null
+
+    fun wet(i: Int) = (m.precipitation.getOrNull(i) ?: 0.0) >= RAIN_MM_PER_15_MIN
+    fun minutesUntil(i: Int): Long =
+        Duration.between(now, LocalDateTime.parse(m.time[i])).toMinutes().coerceAtLeast(5)
+
+    val rainingNow = wet(start)
+    for (i in start + 1 until end) {
+        if (wet(i) != rainingNow) {
+            val mins = minutesUntil(i)
+            return if (rainingNow) "Rain likely to stop in about $mins min"
+            else "Rain likely in about $mins min"
+        }
+    }
+    return if (rainingNow) "Rain likely to continue for the next 2 hours"
+    else "No rain expected in the next 2 hours"
 }

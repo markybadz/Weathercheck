@@ -12,7 +12,8 @@ private val sample = """
 "hourly":{"time":["2026-11-04T08:00","2026-11-04T09:00","2026-11-04T10:00","2026-11-04T11:00"],
 "temperature_2m":[28.1,29.4,30.2,null],"precipitation_probability":[10,20,35,60],"weather_code":[1,2,3,95],"wind_gusts_10m":[15.0,18.2,22.0,40.0]},
 "daily_units":{},
-"daily":{"time":["2026-11-04","2026-11-05"],"weather_code":[95,61],"temperature_2m_max":[32.0,31.1],"temperature_2m_min":[25.2,24.9],"precipitation_probability_max":[80,null]}}
+"daily":{"time":["2026-11-04","2026-11-05"],"weather_code":[95,61],"temperature_2m_max":[32.0,31.1],"temperature_2m_min":[25.2,24.9],"precipitation_probability_max":[80,null]},
+"minutely_15":{"time":["2026-11-04T09:15","2026-11-04T09:30","2026-11-04T09:45","2026-11-04T10:00","2026-11-04T10:15"],"precipitation":[0.0,0.0,0.3,0.5,0.0]}}
 """
 
 private fun check(c: Boolean, m: String) = assertTrue(m, c)
@@ -39,5 +40,11 @@ class WeatherParsingTest {
     val g2 = json.decodeFromString(GeoResponse.serializer(), """{"results":[{"id":1,"name":"Manila","latitude":14.6,"longitude":120.98,"country":"Philippines","admin1":"Metro Manila"}]}""")
     check(g2.results[0].displayName == "Manila, Metro Manila, Philippines", "geo display name")
     check(WeatherCodes.describe(95) == "Thunderstorm", "weather codes")
+    check(w.nowcast == "Rain likely in about 30 min", "nowcast rain start: ${w.nowcast}")
+    val wet = r.copy(minutely15 = r.minutely15!!.copy(precipitation = listOf(0.4, 0.2, 0.0, 0.0, 0.0)))
+    check(wet.rainNowcast() == "Rain likely to stop in about 30 min", "nowcast rain stop: ${wet.rainNowcast()}")
+    val dry = r.copy(minutely15 = r.minutely15!!.copy(precipitation = listOf(0.0, 0.0, 0.0, 0.0, 0.0)))
+    check(dry.rainNowcast() == "No rain expected in the next 2 hours", "nowcast dry")
+    check(r.copy(minutely15 = null).rainNowcast() == null, "nowcast missing data")
     }
 }

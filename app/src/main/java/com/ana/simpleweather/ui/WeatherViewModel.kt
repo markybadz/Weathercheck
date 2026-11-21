@@ -16,6 +16,8 @@ import com.ana.simpleweather.data.WeatherException
 import com.ana.simpleweather.notifications.WorkScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -52,9 +54,11 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
 
     private var loadJob: Job? = null
     private var searchJob: Job? = null
+    private var autoRefreshJob: Job? = null
+    private val startupJob: Job
 
     init {
-        viewModelScope.launch {
+        startupJob = viewModelScope.launch {
             WorkScheduler.apply(app, repo.currentSettings(), rescheduleDaily = false)
             val place = repo.currentPlace()
             when {
@@ -73,6 +77,36 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
     private fun launchLoad(block: suspend CoroutineScope.() -> Unit) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch(block = block)
+    }
+
+    // ---------- Real-time updates ----------
+
+    /**
+     * Keeps the forecast fresh while the app is on screen: refreshes right away if the
+     * data is older than [AUTO_REFRESH_MS], then again every [AUTO_REFRESH_MS].
+     * Open-Meteo updates current conditions every 15 minutes, so checking more often
+     * would only repeat the same data. Called from the activity's onStart.
+     */
+    fun startAutoRefresh() {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = viewModelScope.launch {
+            startupJob.join() // startup already loads once; don't race it
+            while (isActive) {
+                val s = _state.value
+                val age = s.lastUpdated?.let { System.currentTimeMillis() - it }
+                val due = age == null || age >= AUTO_REFRESH_MS || s.isStale
+                val busy = s.loading || loadJob?.isActive == true
+                if (due && !busy && !s.showSearch && repo.currentPlace() != null) refresh()
+                val wait = if (age == null || due) AUTO_REFRESH_MS else AUTO_REFRESH_MS - age
+                delay(wait.coerceAtLeast(MIN_RETRY_MS))
+            }
+        }
+    }
+
+    /** Stops the foreground refresh loop (activity onStop), so no data is used in the background. */
+    fun stopAutoRefresh() {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = null
     }
 
     fun refresh() = launchLoad {
@@ -247,6 +281,11 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun CachedForecast.isFor(place: SavedPlace) =
         abs(latitude - place.latitude) < 0.01 && abs(longitude - place.longitude) < 0.01
+
+    private companion object {
+        const val AUTO_REFRESH_MS = 15 * 60 * 1000L
+        const val MIN_RETRY_MS = 60 * 1000L
+    }
 
     /** ~1 km threshold so tiny GPS jitter doesn't change the place name. */
     private fun movedFar(place: SavedPlace, lat: Double, lon: Double) =

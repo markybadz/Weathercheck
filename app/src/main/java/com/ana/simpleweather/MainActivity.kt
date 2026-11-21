@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ana.simpleweather.ui.SettingsScreen
 import com.ana.simpleweather.ui.WeatherScreen
@@ -31,6 +32,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppRoot(vm: WeatherViewModel = viewModel()) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Refresh in real time only while the app is visible.
+    LifecycleStartEffect(vm) {
+        vm.startAutoRefresh()
+        onStopOrDispose { vm.stopAutoRefresh() }
+    }
     if (showSettings) {
         BackHandler { showSettings = false }
         SettingsScreen(vm = vm, onBack = { showSettings = false })

@@ -1,7 +1,9 @@
 package com.ana.simpleweather.ui
 
 import android.Manifest
+import android.content.Context
 import android.text.format.DateFormat
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -49,9 +51,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,10 +75,10 @@ import com.ana.simpleweather.data.WeatherCodes
 import com.ana.simpleweather.data.WeatherData
 import com.ana.simpleweather.data.hasLocationPermission
 import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /** Content is capped at 640dp wide and centered, so it reads well on tablets too. */
 private val ContentWidth = Modifier.widthIn(max = 640.dp).fillMaxWidth()
@@ -109,8 +113,15 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
                             overflow = TextOverflow.Ellipsis,
                         )
                         state.lastUpdated?.let {
+                            // Ticks every 30 s so "Updated 5 min ago" stays accurate.
+                            val now by produceState(System.currentTimeMillis()) {
+                                while (true) {
+                                    delay(30_000)
+                                    value = System.currentTimeMillis()
+                                }
+                            }
                             Text(
-                                "Updated " + DateFormat.getTimeFormat(context).format(Date(it)),
+                                updatedText(context, it, now),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -134,48 +145,64 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
             )
         }
     ) { padding ->
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = state.loading && state.weather != null,
+            onRefresh = vm::refresh,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (state.loading) {
-                item { LinearProgressIndicator(ContentWidth) }
-            }
-            state.error?.let { message ->
-                item {
-                    MessageCard(
-                        message = if (state.isStale) "$message\nShowing the last saved forecast." else message,
-                        onDismiss = vm::dismissError,
-                    )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (state.loading) {
+                    item { LinearProgressIndicator(ContentWidth) }
                 }
-            }
-            if (state.showWelcome && state.weather == null) {
-                item { WelcomeCard(onUseLocation = requestLocation, onSearch = vm::openSearch) }
-            }
-            val weather = state.weather
-            if (weather != null) {
-                item { CurrentCard(weather) }
-                item { SectionTitle("Next 24 hours") }
-                item { HourlyRow(weather.hourly, is24h = DateFormat.is24HourFormat(context)) }
-                item { SectionTitle("7-day forecast") }
-                item { DailyCard(weather.daily) }
-            } else if (state.loading) {
-                item {
-                    Box(ContentWidth.padding(32.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                state.error?.let { message ->
+                    item {
+                        MessageCard(
+                            message = if (state.isStale) "$message\nShowing the last saved forecast." else message,
+                            onDismiss = vm::dismissError,
+                        )
                     }
                 }
-            }
-            item {
-                Text(
-                    "Weather data by Open-Meteo.com",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (state.showWelcome && state.weather == null) {
+                    item { WelcomeCard(onUseLocation = requestLocation, onSearch = vm::openSearch) }
+                }
+                val weather = state.weather
+                if (weather != null) {
+                    item { CurrentCard(weather) }
+                    item { SectionTitle("Next 24 hours") }
+                    item { HourlyRow(weather.hourly, is24h = DateFormat.is24HourFormat(context)) }
+                    item { SectionTitle("16-day forecast") }
+                    item { DailyCard(weather.daily) }
+                    if (weather.daily.size > 7) {
+                        item {
+                            Text(
+                                "Forecasts beyond about a week are less certain.",
+                                modifier = ContentWidth,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                } else if (state.loading) {
+                    item {
+                        Box(ContentWidth.padding(32.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        "Weather data by Open-Meteo.com",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -189,6 +216,18 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
             onSelect = vm::selectCity,
             onDismiss = vm::closeSearch,
         )
+    }
+}
+
+/** "Updated just now", "Updated 12 min ago", "Updated 3:05 PM", or with a date if not today. */
+private fun updatedText(context: Context, at: Long, now: Long): String {
+    val minutes = (now - at) / 60_000
+    val time = DateFormat.getTimeFormat(context).format(Date(at))
+    return when {
+        minutes < 1 -> "Updated just now"
+        minutes < 60 -> "Updated $minutes min ago"
+        DateUtils.isToday(at) -> "Updated $time"
+        else -> "Updated ${DateFormat.getMediumDateFormat(context).format(Date(at))}, $time"
     }
 }
 
@@ -272,6 +311,15 @@ private fun CurrentCard(w: WeatherData) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
+            w.nowcast?.let {
+                Text(
+                    "☔ $it",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Spacer(Modifier.padding(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Stat("Humidity", "${w.humidity.roundToInt()}%")
@@ -321,6 +369,8 @@ private fun HourlyRow(hours: List<HourForecast>, is24h: Boolean) {
 
 @Composable
 private fun DailyCard(days: List<DayForecast>) {
+    // Weekday plus day of month ("Tue 25"), since 16 days repeat weekdays.
+    val dayFormatter = DateTimeFormatter.ofPattern("EEE d", Locale.getDefault())
     Card(ContentWidth) {
         Column(Modifier.padding(vertical = 4.dp)) {
             days.forEachIndexed { index, d ->
@@ -332,8 +382,7 @@ private fun DailyCard(days: List<DayForecast>) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        if (index == 0) "Today"
-                        else d.date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()),
+                        if (index == 0) "Today" else d.date.format(dayFormatter),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyLarge,
                     )
