@@ -1,5 +1,8 @@
 # Builds the debug APK on GitHub's servers every time you push (or when you
 # click "Run workflow"). Download it from the run's "Artifacts" section.
+# Builds of the main branch are also published as a GitHub release, so the
+# newest APK is always at:
+# https://github.com/markybadz/Weathercheck/releases/latest/download/SimpleWeather.apk
 name: Build APK
 
 on:
@@ -9,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to publish the release
     steps:
       - uses: actions/checkout@v4
 
@@ -31,3 +36,15 @@ jobs:
         with:
           name: SimpleWeather-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK as a release (main branch only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk SimpleWeather.apk
+          gh release create "build-${{ github.run_number }}" SimpleWeather.apk \
+            --target "${{ github.sha }}" \
+            --title "Simple Weather build ${{ github.run_number }}" \
+            --notes "Debug APK built from ${{ github.sha }}. Download SimpleWeather.apk below and open it on your Android phone (Android 8.0 or newer)." \
+            --latest
