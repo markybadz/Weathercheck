@@ -74,6 +74,14 @@ echo "sdk.dir=/path/to/Android/Sdk" > local.properties   # Windows: sdk.dir=C\:\
 ```
 The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
+### Ready-made APK
+
+Every change merged into `main` is built and published automatically. The newest APK is always here:
+
+**https://github.com/markybadz/Weathercheck/releases/latest/download/SimpleWeather.apk**
+
+Open that link on your phone, then follow "Install on your Android phone" below. All builds are listed under [Releases](https://github.com/markybadz/Weathercheck/releases).
+
 ### Option C: No computer setup (GitHub builds it for you)
 1. Create a free GitHub account and a new repository.
 2. Upload the contents of the `SimpleWeather` folder, including the hidden `.github` folder. Uploading through `git push` is the most reliable way to include it.
