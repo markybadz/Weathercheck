@@ -47,7 +47,7 @@ object Notifier {
     }
 
     @SuppressLint("MissingPermission") // checked by canNotify()
-    fun show(context: Context, id: Int, channel: String, title: String, text: String) {
+    fun show(context: Context, id: Int, channel: String, title: String, text: String, silent: Boolean = false) {
         if (!canNotify(context)) return
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -67,6 +67,7 @@ object Notifier {
             )
             .setContentIntent(pending)
             .setAutoCancel(true)
+            .setSilent(silent)
             .build()
         NotificationManagerCompat.from(context).notify(id, notification)
     }

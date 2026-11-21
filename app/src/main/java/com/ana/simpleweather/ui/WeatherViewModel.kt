@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.IOException
 import kotlin.math.abs
 
 data class WeatherUiState(
@@ -34,6 +35,8 @@ data class WeatherUiState(
     val lastUpdated: Long? = null,
     val isStale: Boolean = false,
     val error: String? = null,
+    /** Location permission was denied with "Don't ask again"; offer the app's system settings. */
+    val locationBlocked: Boolean = false,
     val showWelcome: Boolean = false,
     val showSearch: Boolean = false,
     val searching: Boolean = false,
@@ -144,7 +147,7 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
             }
             return@launchLoad
         }
-        _state.update { it.copy(loading = true, error = null, showWelcome = false) }
+        _state.update { it.copy(loading = true, error = null, locationBlocked = false, showWelcome = false) }
         val loc = location.currentLocation()
         if (loc == null) {
             _state.update {
@@ -162,12 +165,22 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
         load(place)
     }
 
-    fun onLocationPermissionDenied() {
+    /** @param permanently true when Android will no longer show the permission prompt. */
+    fun onLocationPermissionDenied(permanently: Boolean) {
         _state.update {
-            it.copy(
-                error = "Location permission was denied. Search for a city to see its weather.",
-                showSearch = true,
-            )
+            if (permanently) {
+                it.copy(
+                    error = "Location access is turned off for this app. Allow it in the app's settings, " +
+                        "or search for a city instead.",
+                    locationBlocked = true,
+                )
+            } else {
+                it.copy(
+                    error = "Location permission was denied. Search for a city to see its weather.",
+                    locationBlocked = false,
+                    showSearch = true,
+                )
+            }
         }
     }
 
@@ -184,9 +197,13 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
         }
         val unit = repo.currentSettings().unit
         try {
-            val json = WeatherApi.fetchForecastJson(place.latitude, place.longitude, unit)
-            repo.saveCache(json, place.latitude, place.longitude)
-            val data = WeatherApi.parseWeather(json)
+            val fetched = WeatherApi.fetchForecast(place.latitude, place.longitude, unit)
+            try {
+                repo.saveCache(fetched.json, place.latitude, place.longitude)
+            } catch (e: IOException) {
+                // A failed cache write (e.g. storage full) shouldn't hide fresh data.
+            }
+            val data = fetched.weather
             _state.update {
                 it.copy(
                     loading = false,
@@ -249,11 +266,12 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun dismissError() = _state.update { it.copy(error = null) }
+    fun dismissError() = _state.update { it.copy(error = null, locationBlocked = false) }
 
     // ---------- Settings ----------
 
     fun setUnit(unit: TempUnit) {
+        if (unit == settings.value.unit) return
         viewModelScope.launch {
             repo.setUnit(unit)
             refresh()
@@ -270,6 +288,10 @@ class WeatherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSevereEnabled(enabled: Boolean) = updateSchedule(rescheduleDaily = false) {
         repo.setSevereEnabled(enabled)
+    }
+
+    fun setQuietAtNight(enabled: Boolean) {
+        viewModelScope.launch { repo.setQuietAtNight(enabled) }
     }
 
     private fun updateSchedule(rescheduleDaily: Boolean, change: suspend () -> Unit) {

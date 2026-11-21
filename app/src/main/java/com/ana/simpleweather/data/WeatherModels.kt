@@ -32,6 +32,7 @@ data class CurrentDto(
     @SerialName("apparent_temperature") val apparentTemperature: Double? = null,
     @SerialName("relative_humidity_2m") val humidity: Double? = null,
     @SerialName("wind_speed_10m") val windSpeed: Double? = null,
+    @SerialName("wind_direction_10m") val windDirection: Double? = null,
     @SerialName("weather_code") val weatherCode: Int? = null,
     @SerialName("is_day") val isDay: Int? = null,
 )
@@ -43,6 +44,7 @@ data class HourlyDto(
     @SerialName("precipitation_probability") val precipitationProbability: List<Double?> = emptyList(),
     @SerialName("weather_code") val weatherCode: List<Int?> = emptyList(),
     @SerialName("wind_gusts_10m") val windGusts: List<Double?> = emptyList(),
+    @SerialName("is_day") val isDay: List<Int?> = emptyList(),
 )
 
 @Serializable
@@ -52,6 +54,10 @@ data class DailyDto(
     @SerialName("temperature_2m_max") val tempMax: List<Double?> = emptyList(),
     @SerialName("temperature_2m_min") val tempMin: List<Double?> = emptyList(),
     @SerialName("precipitation_probability_max") val precipitationProbabilityMax: List<Double?> = emptyList(),
+    @SerialName("precipitation_sum") val precipitationSum: List<Double?> = emptyList(),
+    @SerialName("uv_index_max") val uvIndexMax: List<Double?> = emptyList(),
+    val sunrise: List<String?> = emptyList(),
+    val sunset: List<String?> = emptyList(),
 )
 
 /** 15-minute steps, used for the "rain in the next 2 hours" line. */
@@ -91,6 +97,8 @@ data class WeatherData(
     val isDay: Boolean,
     val humidity: Double,
     val windSpeed: Double,
+    /** Compass direction the wind blows from, e.g. "NE"; null if unknown. */
+    val windDirection: String?,
     val precipitationChance: Double?,
     val tempUnit: String,
     val windUnit: String,
@@ -105,6 +113,7 @@ data class HourForecast(
     val temperature: Double,
     val weatherCode: Int,
     val precipitationChance: Double?,
+    val isDay: Boolean,
 )
 
 data class DayForecast(
@@ -113,6 +122,11 @@ data class DayForecast(
     val max: Double,
     val min: Double,
     val precipitationChance: Double?,
+    /** Total rain/snow for the day in mm; null if unknown. */
+    val precipitationSum: Double? = null,
+    val uvIndexMax: Double? = null,
+    val sunrise: LocalDateTime? = null,
+    val sunset: LocalDateTime? = null,
 )
 
 /** Index of the hourly slot that contains "now" at the forecast location. */
@@ -141,6 +155,7 @@ fun ForecastResponse.toWeatherData(): WeatherData {
                 temperature = t,
                 weatherCode = h.weatherCode.getOrNull(i) ?: 0,
                 precipitationChance = h.precipitationProbability.getOrNull(i),
+                isDay = h.isDay.getOrNull(i)?.let { it == 1 } ?: (LocalDateTime.parse(h.time[i]).hour in 6..17),
             )
         }
     }
@@ -156,6 +171,10 @@ fun ForecastResponse.toWeatherData(): WeatherData {
                 max = max,
                 min = min,
                 precipitationChance = d.precipitationProbabilityMax.getOrNull(i),
+                precipitationSum = d.precipitationSum.getOrNull(i),
+                uvIndexMax = d.uvIndexMax.getOrNull(i),
+                sunrise = d.sunrise.getOrNull(i)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() },
+                sunset = d.sunset.getOrNull(i)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() },
             )
         }
     }
@@ -167,6 +186,7 @@ fun ForecastResponse.toWeatherData(): WeatherData {
         isDay = (c.isDay ?: 1) == 1,
         humidity = c.humidity ?: 0.0,
         windSpeed = c.windSpeed ?: 0.0,
+        windDirection = c.windDirection?.let(::compassPoint),
         precipitationChance = hourly?.precipitationProbability?.getOrNull(start),
         tempUnit = currentUnits["temperature_2m"] ?: "°",
         windUnit = currentUnits["wind_speed_10m"] ?: "",
@@ -174,6 +194,21 @@ fun ForecastResponse.toWeatherData(): WeatherData {
         daily = days,
         nowcast = rainNowcast(),
     )
+}
+
+private val COMPASS = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+/** 0-360 degrees to one of 8 compass points (the direction the wind comes from). */
+internal fun compassPoint(degrees: Double): String =
+    COMPASS[(((degrees % 360 + 360) % 360 + 22.5) / 45).toInt() % 8]
+
+/** WHO UV index categories. */
+fun uvCategory(uv: Double): String = when {
+    uv < 3 -> "Low"
+    uv < 6 -> "Moderate"
+    uv < 8 -> "High"
+    uv < 11 -> "Very high"
+    else -> "Extreme"
 }
 
 /** Precipitation per 15 minutes (mm) that counts as "raining". */

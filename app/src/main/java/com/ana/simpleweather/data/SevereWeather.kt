@@ -1,6 +1,8 @@
 package com.ana.simpleweather.data
 
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Open-Meteo does not publish official government warnings, so the app derives
@@ -9,7 +11,8 @@ import java.time.LocalDateTime
  */
 data class SevereAlert(val key: String, val title: String, val message: String)
 
-fun ForecastResponse.findSevereWeather(hoursAhead: Int = 12): SevereAlert? {
+fun ForecastResponse.findSevereWeather(hoursAhead: Int = 12, is24h: Boolean = true): SevereAlert? {
+    val timeFormat = DateTimeFormatter.ofPattern(if (is24h) "HH:mm" else "h a", Locale.getDefault())
     val h = hourly ?: return null
     val start = currentHourIndex()
     val end = minOf(start + hoursAhead, h.time.size)
@@ -19,7 +22,7 @@ fun ForecastResponse.findSevereWeather(hoursAhead: Int = 12): SevereAlert? {
     for (i in start until end) {
         val time = runCatching { LocalDateTime.parse(h.time[i]) }.getOrNull() ?: continue
         val day = time.toLocalDate().toString()
-        val hourText = "%02d:00".format(time.hour)
+        val hourText = time.format(timeFormat)
         val code = h.weatherCode.getOrNull(i)
 
         val type: String? = when (code) {

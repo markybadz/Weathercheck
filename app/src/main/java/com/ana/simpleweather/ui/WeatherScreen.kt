@@ -1,7 +1,11 @@
 package com.ana.simpleweather.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.text.format.DateFormat
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -61,12 +65,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ana.simpleweather.data.DayForecast
 import com.ana.simpleweather.data.GeoResult
@@ -74,6 +81,8 @@ import com.ana.simpleweather.data.HourForecast
 import com.ana.simpleweather.data.WeatherCodes
 import com.ana.simpleweather.data.WeatherData
 import com.ana.simpleweather.data.hasLocationPermission
+import com.ana.simpleweather.data.uvCategory
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
@@ -94,7 +103,17 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        if (grants.values.any { it }) vm.useDeviceLocation() else vm.onLocationPermissionDenied()
+        if (grants.values.any { it }) {
+            vm.useDeviceLocation()
+        } else {
+            // After "Don't ask again" (or a second denial) Android stops showing the prompt
+            // and no longer asks for a rationale, so the only way back is the app's settings.
+            val activity = context as? Activity
+            val canAskAgain = activity != null && ActivityCompat.shouldShowRequestPermissionRationale(
+                activity, Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+            vm.onLocationPermissionDenied(permanently = !canAskAgain)
+        }
     }
     // Permission is only requested when the user asks to use their location.
     val requestLocation: () -> Unit = {
@@ -166,6 +185,15 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
                         MessageCard(
                             message = if (state.isStale) "$message\nShowing the last saved forecast." else message,
                             onDismiss = vm::dismissError,
+                            actionLabel = if (state.locationBlocked) "Open app settings" else null,
+                            onAction = {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.fromParts("package", context.packageName, null),
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            },
                         )
                     }
                 }
@@ -219,6 +247,10 @@ fun WeatherScreen(vm: WeatherViewModel, onOpenSettings: () -> Unit) {
     }
 }
 
+/** The forecast times are local to the place; shown with the phone's clock format. */
+private fun LocalDateTime.toLegacyDate(): Date =
+    Date.from(atZone(java.time.ZoneId.systemDefault()).toInstant())
+
 /** "Updated just now", "Updated 12 min ago", "Updated 3:05 PM", or with a date if not today. */
 private fun updatedText(context: Context, at: Long, now: Long): String {
     val minutes = (now - at) / 60_000
@@ -242,7 +274,12 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun MessageCard(message: String, onDismiss: () -> Unit) {
+private fun MessageCard(
+    message: String,
+    onDismiss: () -> Unit,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
+) {
     Card(
         modifier = ContentWidth,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -250,12 +287,16 @@ private fun MessageCard(message: String, onDismiss: () -> Unit) {
         Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(Modifier.width(12.dp))
-            Text(
-                message,
-                modifier = Modifier.weight(1f),
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (actionLabel != null) {
+                    TextButton(onClick = onAction) { Text(actionLabel) }
+                }
+            }
             IconButton(onClick = onDismiss) {
                 Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = MaterialTheme.colorScheme.onErrorContainer)
             }
@@ -299,7 +340,11 @@ private fun CurrentCard(w: WeatherData) {
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(WeatherCodes.emoji(w.weatherCode, w.isDay), fontSize = 56.sp)
+            Text(
+                WeatherCodes.emoji(w.weatherCode, w.isDay),
+                fontSize = 56.sp,
+                modifier = Modifier.clearAndSetSemantics { },
+            )
             Text(
                 "${w.temperature.roundToInt()}${w.tempUnit}",
                 style = MaterialTheme.typography.displayLarge,
@@ -323,8 +368,19 @@ private fun CurrentCard(w: WeatherData) {
             Spacer(Modifier.padding(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Stat("Humidity", "${w.humidity.roundToInt()}%")
-                Stat("Wind", "${w.windSpeed.roundToInt()} ${w.windUnit}")
+                Stat("Wind", "${w.windSpeed.roundToInt()} ${w.windUnit}" + (w.windDirection?.let { " $it" } ?: ""))
                 Stat("Rain chance", w.precipitationChance?.let { "${it.roundToInt()}%" } ?: "–")
+            }
+            val today = w.daily.firstOrNull()
+            if (today != null) {
+                val timeFormat = DateFormat.getTimeFormat(LocalContext.current)
+                Spacer(Modifier.padding(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    today.uvIndexMax?.let { Stat("UV · ${uvCategory(it)}", "${it.roundToInt()}") }
+                    today.precipitationSum?.let { Stat("Rain today", "%.1f mm".format(it)) }
+                    today.sunrise?.let { Stat("Sunrise", timeFormat.format(it.toLegacyDate())) }
+                    today.sunset?.let { Stat("Sunset", timeFormat.format(it.toLegacyDate())) }
+                }
             }
         }
     }
@@ -343,7 +399,10 @@ private fun HourlyRow(hours: List<HourForecast>, is24h: Boolean) {
     val formatter = DateTimeFormatter.ofPattern(if (is24h) "HH:mm" else "h a", Locale.getDefault())
     LazyRow(modifier = ContentWidth, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(hours, key = { it.time.toString() }) { h ->
-            Card {
+            val label = (if (h == hours.first()) "Now" else h.time.format(formatter)) +
+                ": ${h.temperature.roundToInt()} degrees, ${WeatherCodes.describe(h.weatherCode)}" +
+                (h.precipitationChance?.let { ", ${it.roundToInt()}% chance of rain" } ?: "")
+            Card(Modifier.clearAndSetSemantics { contentDescription = label }) {
                 Column(
                     Modifier
                         .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -355,7 +414,7 @@ private fun HourlyRow(hours: List<HourForecast>, is24h: Boolean) {
                         if (h == hours.first()) "Now" else h.time.format(formatter),
                         style = MaterialTheme.typography.labelMedium,
                     )
-                    Text(WeatherCodes.emoji(h.weatherCode, h.time.hour in 6..17), fontSize = 24.sp)
+                    Text(WeatherCodes.emoji(h.weatherCode, h.isDay), fontSize = 24.sp)
                     Text(h.temperature.deg(), style = MaterialTheme.typography.titleMedium)
                     Text(
                         h.precipitationChance?.let { "💧${it.roundToInt()}%" } ?: "",
@@ -375,14 +434,19 @@ private fun DailyCard(days: List<DayForecast>) {
         Column(Modifier.padding(vertical = 4.dp)) {
             days.forEachIndexed { index, d ->
                 if (index > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                val dayName = if (index == 0) "Today" else d.date.format(dayFormatter)
+                val label = "$dayName: ${WeatherCodes.describe(d.weatherCode)}, high ${d.max.roundToInt()}, " +
+                    "low ${d.min.roundToInt()}" +
+                    (d.precipitationChance?.let { ", ${it.roundToInt()}% chance of rain" } ?: "")
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .clearAndSetSemantics { contentDescription = label }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        if (index == 0) "Today" else d.date.format(dayFormatter),
+                        dayName,
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyLarge,
                     )

@@ -7,12 +7,12 @@ import org.junit.Test
 private val sample = """
 {"latitude":14.6,"longitude":121.0,"timezone":"Asia/Manila","utc_offset_seconds":28800,"elevation":12.0,
 "current_units":{"time":"iso8601","interval":"seconds","temperature_2m":"°C","apparent_temperature":"°C","relative_humidity_2m":"%","weather_code":"wmo code","wind_speed_10m":"km/h","is_day":""},
-"current":{"time":"2026-11-04T09:15","interval":900,"temperature_2m":29.4,"apparent_temperature":33.1,"relative_humidity_2m":74,"weather_code":2,"wind_speed_10m":9.7,"is_day":1},
+"current":{"time":"2026-11-04T09:15","interval":900,"wind_direction_10m":50,"temperature_2m":29.4,"apparent_temperature":33.1,"relative_humidity_2m":74,"weather_code":2,"wind_speed_10m":9.7,"is_day":1},
 "hourly_units":{"time":"iso8601","temperature_2m":"°C","precipitation_probability":"%","weather_code":"wmo code","wind_gusts_10m":"km/h"},
 "hourly":{"time":["2026-11-04T08:00","2026-11-04T09:00","2026-11-04T10:00","2026-11-04T11:00"],
 "temperature_2m":[28.1,29.4,30.2,null],"precipitation_probability":[10,20,35,60],"weather_code":[1,2,3,95],"wind_gusts_10m":[15.0,18.2,22.0,40.0]},
 "daily_units":{},
-"daily":{"time":["2026-11-04","2026-11-05"],"weather_code":[95,61],"temperature_2m_max":[32.0,31.1],"temperature_2m_min":[25.2,24.9],"precipitation_probability_max":[80,null]},
+"daily":{"time":["2026-11-04","2026-11-05"],"weather_code":[95,61],"temperature_2m_max":[32.0,31.1],"temperature_2m_min":[25.2,24.9],"precipitation_probability_max":[80,null],"precipitation_sum":[12.4,null],"uv_index_max":[9.3,null],"sunrise":["2026-11-04T05:58","2026-11-05T05:59"],"sunset":["2026-11-04T17:26",null]},
 "minutely_15":{"time":["2026-11-04T09:15","2026-11-04T09:30","2026-11-04T09:45","2026-11-04T10:00","2026-11-04T10:15"],"precipitation":[0.0,0.0,0.3,0.5,0.0]}}
 """
 
@@ -40,6 +40,15 @@ class WeatherParsingTest {
     val g2 = json.decodeFromString(GeoResponse.serializer(), """{"results":[{"id":1,"name":"Manila","latitude":14.6,"longitude":120.98,"country":"Philippines","admin1":"Metro Manila"}]}""")
     check(g2.results[0].displayName == "Manila, Metro Manila, Philippines", "geo display name")
     check(WeatherCodes.describe(95) == "Thunderstorm", "weather codes")
+    check(w.windDirection == "NE", "wind direction: ${w.windDirection}")
+    check(w.hourly.first().isDay, "hourly is_day falls back to the hour when missing")
+    val today = w.daily.first()
+    check(today.precipitationSum == 12.4 && today.uvIndexMax == 9.3, "daily rain sum and UV")
+    check(today.sunrise?.hour == 5 && today.sunset?.hour == 17 && w.daily[1].sunset == null, "sunrise/sunset")
+    check(compassPoint(0.0) == "N" && compassPoint(359.0) == "N" && compassPoint(225.0) == "SW", "compass points")
+    check(uvCategory(2.0) == "Low" && uvCategory(9.3) == "Very high" && uvCategory(11.0) == "Extreme", "UV categories")
+    check(r.findSevereWeather(is24h = true)?.message?.contains("11:00") == true, "24-hour alert time")
+    check(r.findSevereWeather(is24h = false)?.message?.contains("11") == true, "12-hour alert time")
     check(w.nowcast == "Rain likely in about 30 min", "nowcast rain start: ${w.nowcast}")
     val wet = r.copy(minutely15 = r.minutely15!!.copy(precipitation = listOf(0.4, 0.2, 0.0, 0.0, 0.0)))
     check(wet.rainNowcast() == "Rain likely to stop in about 30 min", "nowcast rain stop: ${wet.rainNowcast()}")

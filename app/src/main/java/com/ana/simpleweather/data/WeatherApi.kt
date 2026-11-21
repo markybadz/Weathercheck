@@ -9,6 +9,7 @@ import okhttp3.Request
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,8 +31,11 @@ object WeatherApi {
         coerceInputValues = true
     }
 
-    /** Downloads the forecast and returns the raw JSON (so it can be cached). */
-    suspend fun fetchForecastJson(latitude: Double, longitude: Double, unit: TempUnit): String {
+    /** A downloaded forecast: the raw JSON (for the cache) and the parsed, validated data. */
+    class Fetched(val json: String, val response: ForecastResponse, val weather: WeatherData)
+
+    /** Downloads the forecast, parses it once and validates it before it is cached. */
+    suspend fun fetchForecast(latitude: Double, longitude: Double, unit: TempUnit): Fetched {
         val url = HttpUrl.Builder()
             .scheme("https")
             .host("api.open-meteo.com")
@@ -40,15 +44,16 @@ object WeatherApi {
             .addQueryParameter("longitude", longitude.toString())
             .addQueryParameter(
                 "current",
-                "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day"
+                "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day"
             )
             .addQueryParameter(
                 "hourly",
-                "temperature_2m,precipitation_probability,weather_code,wind_gusts_10m"
+                "temperature_2m,precipitation_probability,weather_code,wind_gusts_10m,is_day"
             )
             .addQueryParameter(
                 "daily",
-                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max," +
+                    "precipitation_sum,uv_index_max,sunrise,sunset"
             )
             .addQueryParameter("minutely_15", "precipitation")
             .addQueryParameter("timezone", "auto")
@@ -67,8 +72,15 @@ object WeatherApi {
             )
             .build()
         val body = get(url)
-        parseWeather(body) // validate before returning/caching
-        return body
+        val response = parseForecast(body)
+        val weather = try {
+            response.toWeatherData()
+        } catch (e: WeatherException) {
+            throw e
+        } catch (e: Exception) {
+            throw WeatherException("Couldn't read the weather data. Please try again later.", e)
+        }
+        return Fetched(body, response, weather)
     }
 
     fun parseForecast(body: String): ForecastResponse = try {
@@ -92,7 +104,7 @@ object WeatherApi {
             .addPathSegments("v1/search")
             .addQueryParameter("name", query.trim())
             .addQueryParameter("count", "10")
-            .addQueryParameter("language", "en")
+            .addQueryParameter("language", Locale.getDefault().language.ifBlank { "en" })
             .addQueryParameter("format", "json")
             .build()
         val body = get(url)

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
+import java.time.LocalDate
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -25,6 +26,8 @@ data class AppSettings(
     val dailyHour: Int = 7,
     val dailyMinute: Int = 0,
     val severeEnabled: Boolean = false,
+    /** Severe alerts between 10 PM and 6 AM arrive without sound or vibration. */
+    val quietAtNight: Boolean = true,
 )
 
 /** The place whose weather is shown. [fromDevice] = true means "my location". */
@@ -60,7 +63,8 @@ class SettingsRepository(context: Context) {
         val CACHE_TIME = longPreferencesKey("cache_time")
         val CACHE_LAT = doublePreferencesKey("cache_lat")
         val CACHE_LON = doublePreferencesKey("cache_lon")
-        val LAST_SEVERE_KEY = stringPreferencesKey("last_severe_key")
+        val SEVERE_KEYS = stringPreferencesKey("notified_severe_keys")
+        val QUIET_NIGHT = booleanPreferencesKey("quiet_at_night")
     }
 
     private val data: Flow<Preferences> = store.data.catch { e ->
@@ -74,6 +78,7 @@ class SettingsRepository(context: Context) {
             dailyHour = p[Keys.DAILY_HOUR] ?: 7,
             dailyMinute = p[Keys.DAILY_MINUTE] ?: 0,
             severeEnabled = p[Keys.SEVERE] ?: false,
+            quietAtNight = p[Keys.QUIET_NIGHT] ?: true,
         )
     }
 
@@ -101,6 +106,7 @@ class SettingsRepository(context: Context) {
     suspend fun setUnit(unit: TempUnit) = store.edit { it[Keys.UNIT] = unit.name }
     suspend fun setDailyEnabled(enabled: Boolean) = store.edit { it[Keys.DAILY] = enabled }
     suspend fun setSevereEnabled(enabled: Boolean) = store.edit { it[Keys.SEVERE] = enabled }
+    suspend fun setQuietAtNight(enabled: Boolean) = store.edit { it[Keys.QUIET_NIGHT] = enabled }
     suspend fun setDailyTime(hour: Int, minute: Int) = store.edit {
         it[Keys.DAILY_HOUR] = hour
         it[Keys.DAILY_MINUTE] = minute
@@ -120,6 +126,19 @@ class SettingsRepository(context: Context) {
         it[Keys.CACHE_LON] = longitude
     }
 
-    suspend fun lastSevereKey(): String? = data.first()[Keys.LAST_SEVERE_KEY]
-    suspend fun setLastSevereKey(key: String) = store.edit { it[Keys.LAST_SEVERE_KEY] = key }
+    // Severe alerts already shown, as "<type>-<yyyy-mm-dd>" keys, so each type of event
+    // is announced once per day even if different events alternate.
+    suspend fun notifiedSevereKeys(): Set<String> =
+        data.first()[Keys.SEVERE_KEYS]?.split('|')?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+    suspend fun addNotifiedSevereKey(key: String) = store.edit { p ->
+        val cutoff = LocalDate.now().minusDays(2)
+        val kept = (p[Keys.SEVERE_KEYS]?.split('|').orEmpty() + key)
+            .filter { k ->
+                val day = runCatching { LocalDate.parse(k.takeLast(10)) }.getOrNull()
+                day != null && !day.isBefore(cutoff)
+            }
+            .distinct()
+        p[Keys.SEVERE_KEYS] = kept.joinToString("|")
+    }
 }
