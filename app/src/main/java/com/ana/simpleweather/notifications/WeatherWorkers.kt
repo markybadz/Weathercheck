@@ -1,6 +1,7 @@
 package com.ana.simpleweather.notifications
 
 import android.content.Context
+import android.text.format.DateFormat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.ana.simpleweather.data.SettingsRepository
@@ -8,7 +9,8 @@ import com.ana.simpleweather.data.WeatherApi
 import com.ana.simpleweather.data.WeatherCodes
 import com.ana.simpleweather.data.WeatherException
 import com.ana.simpleweather.data.findSevereWeather
-import com.ana.simpleweather.data.toWeatherData
+import java.io.IOException
+import java.time.LocalTime
 import kotlin.math.roundToInt
 
 /**
@@ -25,9 +27,9 @@ class DailyWeatherWorker(context: Context, params: WorkerParameters) :
         val place = repo.currentPlace() ?: return Result.success()
 
         return try {
-            val json = WeatherApi.fetchForecastJson(place.latitude, place.longitude, settings.unit)
-            repo.saveCache(json, place.latitude, place.longitude)
-            val w = WeatherApi.parseForecast(json).toWeatherData()
+            val fetched = WeatherApi.fetchForecast(place.latitude, place.longitude, settings.unit)
+            saveCacheSafely(repo, fetched.json, place.latitude, place.longitude)
+            val w = fetched.weather
             val today = w.daily.firstOrNull()
 
             val title = "${place.name}: ${w.temperature.roundToInt()}${w.tempUnit}, " +
@@ -60,23 +62,37 @@ class SevereWeatherWorker(context: Context, params: WorkerParameters) :
         val place = repo.currentPlace() ?: return Result.success()
 
         return try {
-            val json = WeatherApi.fetchForecastJson(place.latitude, place.longitude, settings.unit)
-            repo.saveCache(json, place.latitude, place.longitude)
-            val alert = WeatherApi.parseForecast(json).findSevereWeather()
+            val fetched = WeatherApi.fetchForecast(place.latitude, place.longitude, settings.unit)
+            saveCacheSafely(repo, fetched.json, place.latitude, place.longitude)
+            val alert = fetched.response.findSevereWeather(
+                is24h = DateFormat.is24HourFormat(applicationContext)
+            )
             // Only notify once per type of event per day.
-            if (alert != null && alert.key != repo.lastSevereKey()) {
+            if (alert != null && alert.key !in repo.notifiedSevereKeys()) {
+                val hour = LocalTime.now().hour
+                val night = hour >= 22 || hour < 6
                 Notifier.show(
                     applicationContext,
                     Notifier.ID_SEVERE,
                     Notifier.CHANNEL_SEVERE,
                     "⚠️ ${alert.title} – ${place.name}",
-                    alert.message
+                    alert.message,
+                    silent = settings.quietAtNight && night,
                 )
-                repo.setLastSevereKey(alert.key)
+                repo.addNotifiedSevereKey(alert.key)
             }
             Result.success()
         } catch (e: WeatherException) {
             Result.success() // try again at the next scheduled check
         }
+    }
+}
+
+/** A failed cache write (e.g. disk full) shouldn't stop the notification. */
+private suspend fun saveCacheSafely(repo: SettingsRepository, json: String, lat: Double, lon: Double) {
+    try {
+        repo.saveCache(json, lat, lon)
+    } catch (e: IOException) {
+        // Keep going; the next successful fetch will refresh the cache.
     }
 }

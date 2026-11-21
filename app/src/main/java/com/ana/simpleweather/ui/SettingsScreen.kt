@@ -3,6 +3,7 @@ package com.ana.simpleweather.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.text.format.DateFormat
@@ -31,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -160,6 +162,11 @@ fun SettingsScreen(vm: WeatherViewModel, onBack: () -> Unit) {
                     subtitle = "Checks the forecast about every 3 hours for thunderstorms, heavy rain or snow, and strong winds",
                     checked = settings.severeEnabled,
                 ) { on -> if (on) enable(NotifyKind.SEVERE) else vm.setSevereEnabled(false) }
+                SwitchRow(
+                    title = "Quiet at night",
+                    subtitle = "Severe weather warnings between 10 PM and 6 AM arrive without sound or vibration",
+                    checked = settings.quietAtNight,
+                ) { on -> vm.setQuietAtNight(on) }
 
                 if (showBlockedHint) {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
@@ -193,6 +200,12 @@ fun SettingsScreen(vm: WeatherViewModel, onBack: () -> Unit) {
                     "• Severe weather warnings are worked out from the forecast. They are NOT official government " +
                         "warnings. Always follow your national weather service (for example, PAGASA in the Philippines)."
                 )
+                OutlinedButton(onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://www.pagasa.dost.gov.ph/"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }) { Text("Open PAGASA weather advisories") }
                 InfoText("• Weather data: Open-Meteo.com (free, no account needed).")
             }
         }
