@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sun behind a cloud, sized for the 108dp adaptive-icon canvas (art stays inside the 66dp safe zone). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M46,32a14,14 0,1 1,0 28a14,14 0,1 1,0 -28z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,74h40a12,12 0,0 0,0 -24a16,16 0,0 0,-30 -4a15,15 0,0 0,-10 28z" />
+</vector>
